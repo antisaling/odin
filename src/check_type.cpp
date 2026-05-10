@@ -604,8 +604,15 @@ gb_internal Entity *find_polymorphic_record_entity(GenTypesData *found_gen_types
 	for (Entity *e : found_gen_types->types) {
 		Type *t = base_type(e->type);
 		TypeTuple *tuple = get_record_polymorphic_params(t);
-		GB_ASSERT_MSG(tuple != nullptr, "%s :: %s", type_to_string(e->type), type_to_string(t));
-		GB_ASSERT(param_count == tuple->variables.count);
+		if (tuple == nullptr) {
+			// NOTE: A previously generated specialization may have become invalid
+			// during concurrent checking. Skip stale cache entries rather than
+			// asserting and crashing the compiler.
+			continue;
+		}
+		if (param_count != tuple->variables.count) {
+			continue;
+		}
 
 		bool skip = false;
 
