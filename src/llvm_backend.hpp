@@ -153,6 +153,7 @@ struct lbModule {
 	i32 internal_type_level;
 
 	RwMutex values_mutex;
+	RecursiveMutex procedure_creation_mutex;
 
 	std::atomic<u32> global_array_index;
 
