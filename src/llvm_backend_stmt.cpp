@@ -293,8 +293,7 @@ gb_internal void lb_pop_target_list(lbProcedure *p) {
 gb_internal void lb_open_scope(lbProcedure *p, Scope *s) {
 	lbModule *m = p->module;
 	if (m->debug_builder) {
-		LLVMMetadataRef curr_metadata = lb_get_llvm_metadata(m, s);
-		if (s != nullptr && s->node != nullptr && curr_metadata == nullptr) {
+		if (s != nullptr && s->node != nullptr) {
 			Token token = ast_token(s->node);
 			unsigned line = cast(unsigned)token.pos.line;
 			unsigned column = cast(unsigned)token.pos.column;
@@ -317,6 +316,9 @@ gb_internal void lb_open_scope(lbProcedure *p, Scope *s) {
 				LLVMMetadataRef res = LLVMDIBuilderCreateLexicalBlock(m->debug_builder, scope,
 					file, line, column
 				);
+				// Scope objects may be reused across cloned procedures with different
+				// DISubprograms (e.g. duplicated runtime helpers). Always refresh the
+				// metadata binding for the current procedure to avoid stale !dbg scopes.
 				lb_set_llvm_metadata(m, s, res);
 			}
 		}
