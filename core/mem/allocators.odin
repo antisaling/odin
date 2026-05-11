@@ -1648,7 +1648,7 @@ DYNAMIC_ARENA_OUT_OF_BAND_SIZE_DEFAULT :: 6554
 /*
 Dynamic arena allocator data.
 */
-Dynamic_Arena :: struct {
+Dynamic_Arena :: struct #no_copy {
 	block_size:           int,
 	out_band_size:        int,
 	alignment:            int,
