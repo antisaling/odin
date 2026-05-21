@@ -229,6 +229,9 @@ gb_internal i64 lb_sizeof(LLVMTypeRef type) {
 		return 8;
 	case LLVMPointerTypeKind:
 		return build_context.ptr_size;
+	case LLVMFunctionTypeKind:
+		// Function values are lowered through pointers when materialized.
+		return build_context.ptr_size;
 	case LLVMStructTypeKind:
 		{
 			unsigned field_count = LLVMCountStructElementTypes(type);
@@ -296,6 +299,8 @@ gb_internal i64 lb_alignof(LLVMTypeRef type) {
 	case LLVMDoubleTypeKind:
 		return 8;
 	case LLVMPointerTypeKind:
+		return build_context.ptr_size;
+	case LLVMFunctionTypeKind:
 		return build_context.ptr_size;
 	case LLVMStructTypeKind:
 		{

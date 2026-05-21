@@ -1539,8 +1539,15 @@ gb_internal bool check_type_specialization_to_internal(CheckerContext *ctx, Type
 
 		// NOTE(bill, 2018-12-14): This is needed to override polymorphic named constants in types
 		if (st->kind == Type_Generic && t_e->kind == Entity_Constant) {
-			Entity *e = scope_lookup(st->Generic.scope, st->Generic.interned_name, 0);
-			GB_ASSERT(e != nullptr);
+			if (st->Generic.scope == nullptr) {
+				return false;
+			}
+			rw_mutex_lock(&st->Generic.scope->mutex);
+			defer (rw_mutex_unlock(&st->Generic.scope->mutex));
+			Entity *e = scope_lookup_current(st->Generic.scope, st->Generic.interned_name, st->Generic.interned_name.hash());
+			if (e == nullptr) {
+				return false;
+			}
 			if (modify_type) {
 				e->kind = Entity_Constant;
 				e->Constant.value = t_e->Constant.value;
