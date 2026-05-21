@@ -1397,10 +1397,23 @@ gb_internal void check_assignment(CheckerContext *c, Operand *operand, Type *typ
 
 gb_internal bool polymorphic_assign_index(Type **gt_, i64 *dst_count, i64 source_count) {
 	Type *gt = *gt_;
-	
-	GB_ASSERT(gt->kind == Type_Generic);
-	Entity *e = scope_lookup(gt->Generic.scope, gt->Generic.interned_name, 0);
-	GB_ASSERT(e != nullptr);
+	if (gt == nullptr) {
+		return *dst_count == source_count;
+	}
+	if (gt->kind != Type_Generic) {
+		return false;
+	}
+	if (gt->Generic.scope == nullptr) {
+		return false;
+	}
+
+	rw_mutex_lock(&gt->Generic.scope->mutex);
+	defer (rw_mutex_unlock(&gt->Generic.scope->mutex));
+
+	Entity *e = scope_lookup_current(gt->Generic.scope, gt->Generic.interned_name, gt->Generic.interned_name.hash());
+	if (e == nullptr) {
+		return false;
+	}
 	if (e->kind == Entity_TypeName) {
 		*gt_ = nullptr;
 		*dst_count = source_count;
@@ -1510,9 +1523,15 @@ gb_internal bool is_polymorphic_type_assignable(CheckerContext *c, Type *poly, T
 		} else if (source->kind == Type_EnumeratedArray) {
 			if (poly->Array.generic_count != nullptr) {
 				Type *gt = poly->Array.generic_count;
-				GB_ASSERT(gt->kind == Type_Generic);
-				Entity *e = scope_lookup(gt->Generic.scope, gt->Generic.interned_name, 0);
-				GB_ASSERT(e != nullptr);
+				if (gt == nullptr || gt->kind != Type_Generic || gt->Generic.scope == nullptr) {
+					return false;
+				}
+				rw_mutex_lock(&gt->Generic.scope->mutex);
+				defer (rw_mutex_unlock(&gt->Generic.scope->mutex));
+				Entity *e = scope_lookup_current(gt->Generic.scope, gt->Generic.interned_name, gt->Generic.interned_name.hash());
+				if (e == nullptr) {
+					return false;
+				}
 				if (e->kind == Entity_TypeName) {
 					Type *index = source->EnumeratedArray.index;
 					Type *it = base_type(index);

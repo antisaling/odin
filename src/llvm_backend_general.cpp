@@ -3827,6 +3827,10 @@ gb_internal lbAddr lb_add_local(lbProcedure *p, Type *type, Entity *e, bool zero
 	}
 
 	LLVMTypeRef llvm_type = lb_type(p->module, type);
+	if (LLVMGetTypeKind(llvm_type) == LLVMFunctionTypeKind) {
+		// Defensive fallback: stack slots store function values via pointers.
+		llvm_type = LLVMPointerType(llvm_type, 0);
+	}
 
 	unsigned alignment = cast(unsigned)gb_max(type_align_of(type), lb_alignof(llvm_type));
 	if (is_type_matrix(type)) {
@@ -3878,6 +3882,9 @@ gb_internal lbAddr lb_add_local_generated(lbProcedure *p, Type *type, bool zero_
 	return lb_add_local(p, type, nullptr, zero_init);
 #else
 	LLVMTypeRef llvm_type = lb_type(p->module, type);
+	if (LLVMGetTypeKind(llvm_type) == LLVMFunctionTypeKind) {
+		llvm_type = LLVMPointerType(llvm_type, 0);
+	}
 
 	unsigned alignment = cast(unsigned)gb_max(type_align_of(type), lb_alignof(llvm_type));
 	if (is_type_matrix(type)) {
