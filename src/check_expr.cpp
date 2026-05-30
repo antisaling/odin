@@ -680,6 +680,24 @@ gb_internal bool check_proc_params_assignable(CheckerContext *c, Type *x, Type *
 
 #define MAXIMUM_TYPE_DISTANCE 10
 
+gb_internal bool is_dense_zero_start_enumerated_array_type(Type *type) {
+	Type *t = base_type(type);
+	if (t == nullptr || t->kind != Type_EnumeratedArray) {
+		return false;
+	}
+	Type *index_type = base_type(t->EnumeratedArray.index);
+	if (index_type == nullptr || index_type->kind != Type_Enum) {
+		return false;
+	}
+	if (t->EnumeratedArray.is_sparse) {
+		return false;
+	}
+	if (t->EnumeratedArray.count != index_type->Enum.fields.count) {
+		return false;
+	}
+	return compare_exact_values(Token_CmpEq, *t->EnumeratedArray.min_value, exact_value_i64(0));
+}
+
 gb_internal i64 check_distance_between_types(CheckerContext *c, Operand *operand, Type *type, bool allow_array_programming) {
 	if (c == nullptr) {
 		GB_ASSERT(operand->mode == Addressing_Value);
@@ -952,6 +970,14 @@ gb_internal i64 check_distance_between_types(CheckerContext *c, Operand *operand
 
 	if (allow_array_programming) {
 		if (is_type_array(dst)) {
+			Type *elem = base_array_type(dst);
+			i64 distance = check_distance_between_types(c, operand, elem, allow_array_programming);
+			if (distance >= 0) {
+				return distance + 6;
+			}
+		}
+
+		if (is_dense_zero_start_enumerated_array_type(dst)) {
 			Type *elem = base_array_type(dst);
 			i64 distance = check_distance_between_types(c, operand, elem, allow_array_programming);
 			if (distance >= 0) {
@@ -4141,6 +4167,14 @@ gb_internal bool check_binary_array_expr(CheckerContext *c, Token op, Operand *x
 			}
 		}
 	}
+	if (is_dense_zero_start_enumerated_array_type(x->type) &&
+	    !is_type_enumerated_array(y->type)) {
+		if (check_is_assignable_to(c, y, x->type)) {
+			if (check_binary_op(c, x, op)) {
+				return true;
+			}
+		}
+	}
 	return false;
 }
 
@@ -5176,6 +5210,25 @@ gb_internal void convert_to_typed(CheckerContext *c, Operand *operand, Type *tar
 					}
 				}
 			}
+			operand->mode = Addressing_Invalid;
+			convert_untyped_error(c, operand, target_type);
+			return;
+		}
+
+		break;
+	}
+
+	case Type_EnumeratedArray: {
+		if (!is_dense_zero_start_enumerated_array_type(t)) {
+			operand->mode = Addressing_Invalid;
+			convert_untyped_error(c, operand, target_type);
+			return;
+		}
+
+		Type *elem = base_array_type(t);
+		if (check_is_assignable_to(c, operand, elem)) {
+			operand->mode = Addressing_Value;
+		} else {
 			operand->mode = Addressing_Invalid;
 			convert_untyped_error(c, operand, target_type);
 			return;
@@ -13132,6 +13185,21 @@ gb_internal ExprKind check_slice_expr(CheckerContext *c, Operand *o, Ast *node, 
 
 	case Type_EnumeratedArray:
 		{
+			if (is_dense_zero_start_enumerated_array_type(t)) {
+				valid = true;
+				max_count = t->EnumeratedArray.count;
+				if (o->mode != Addressing_Variable && !is_type_pointer(o->type)) {
+					gbString str = expr_to_string(node);
+					error(node, "Cannot slice enumerated array '%s', value is not addressable", str);
+					gb_string_free(str);
+					o->mode = Addressing_Invalid;
+					o->expr = node;
+					return kind;
+				}
+				o->type = alloc_type_slice(t->EnumeratedArray.elem);
+				break;
+			}
+
 			ERROR_BLOCK();
 
 			gbString str = expr_to_string(o->expr);

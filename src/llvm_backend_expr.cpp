@@ -6008,6 +6008,28 @@ gb_internal lbAddr lb_build_addr_slice_expr(lbProcedure *p, Ast *expr) {
 		return slice;
 	}
 
+	case Type_EnumeratedArray: {
+		Type *slice_type = alloc_type_slice(type->EnumeratedArray.elem);
+		lbValue len = lb_const_int(p->module, t_int, type->EnumeratedArray.count);
+
+		if (high.value == nullptr) high = len;
+
+		bool low_const  = type_and_value_of_expr(se->low).mode  == Addressing_Constant;
+		bool high_const = type_and_value_of_expr(se->high).mode == Addressing_Constant;
+
+		if (!low_const || !high_const) {
+			if (!no_indices) {
+				lb_emit_slice_bounds_check(p, se->open, low, high, len, se->low != nullptr);
+			}
+		}
+		lbValue elem    = lb_emit_ptr_offset(p, lb_array_elem(p, lb_addr_get_ptr(p, addr)), low);
+		lbValue new_len = lb_emit_arith(p, Token_Sub, high, low, t_int);
+
+		lbAddr slice = lb_add_local_generated(p, slice_type, false);
+		lb_fill_slice(p, slice, elem, new_len);
+		return slice;
+	}
+
 	case Type_FixedCapacityDynamicArray: {
 		Type *elem_type = type->FixedCapacityDynamicArray.elem;
 		Type *slice_type = alloc_type_slice(elem_type);

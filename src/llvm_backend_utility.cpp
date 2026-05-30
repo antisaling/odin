@@ -1911,7 +1911,7 @@ gb_internal lbValue lb_cstring16_len(lbProcedure *p, lbValue value) {
 
 gb_internal lbValue lb_array_elem(lbProcedure *p, lbValue array_ptr) {
 	Type *t = type_deref(array_ptr.type);
-	GB_ASSERT(is_type_array(t));
+	GB_ASSERT(is_type_array(t) || is_type_enumerated_array(t));
 	return lb_emit_struct_ep(p, array_ptr, 0);
 }
 
