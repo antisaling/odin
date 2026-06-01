@@ -1024,7 +1024,9 @@ gb_internal lbValue lb_emit_call_internal(lbProcedure *p, lbValue value, lbValue
 
 	for_array(i, processed_args) {
 		lbValue arg = processed_args[i];
-		if (is_type_proc(arg.type)) {
+		// a bare proc value is a single function pointer and may need a pointer cast; a closure is a
+		// 2-word {fn,env} aggregate already ABI-coerced by the caller above, so it must NOT be pointer-cast.
+		if (is_type_proc(arg.type) && !is_type_closure(arg.type)) {
 			arg.value = LLVMBuildPointerCast(p->builder, arg.value, lb_type(p->module, arg.type), "");
 		}
 		args[arg_index++] = arg.value;

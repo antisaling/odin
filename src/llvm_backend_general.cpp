@@ -1777,7 +1777,7 @@ gb_internal lbValue lb_addr_load(lbProcedure *p, lbAddr const &addr) {
 		return lb_addr_load(p, res);
 	}
 
-	if (is_type_proc(addr.addr.type)) {
+	if (is_type_proc(addr.addr.type) && !is_type_closure(addr.addr.type)) {
 		return addr.addr;
 	}
 	return lb_emit_load(p, addr.addr);
@@ -2617,9 +2617,11 @@ gb_internal LLVMTypeRef lb_type_internal(lbModule *m, Type *type) {
 				field_remapping[field_index] = cast(i32)fields.count;
 
 				Type *field_type = field->type;
-				if (is_type_proc(field_type)) {
+				if (is_type_proc(field_type) && !is_type_closure(field_type)) {
 					// NOTE(bill, 2022-11-23): Prevent type cycle declaration (e.g. vtable) of procedures
 					// because LLVM is dumb with procedure types
+					// a closure field is a 2-word {fn,env} aggregate, not a single pointer; collapsing it
+					// to rawptr would size the field at 8 bytes and corrupt the struct layout.
 					field_type = t_rawptr;
 				}
 
@@ -3444,7 +3446,9 @@ gb_internal lbValue lb_find_ident(lbProcedure *p, lbModule *m, Entity *e, Ast *e
 
 		auto v = *found;
 		// NOTE(bill): This is because pointers are already pointers in LLVM
-		if (is_type_proc(v.type)) {
+		// a closure entity holds the address of a 2-word {fn,env} value, so it must be loaded;
+		// only a bare proc value is itself a function pointer that needs no load.
+		if (is_type_proc(v.type) && !is_type_closure(v.type)) {
 			return v;
 		}
 		return lb_emit_load(p, v);
