@@ -1424,7 +1424,7 @@ gb_internal void lb_emit_store(lbProcedure *p, lbValue ptr, lbValue value) {
 	Type *a = type_deref(ptr.type, true);
 	if (LLVMIsNull(value.value)) {
 		LLVMTypeRef src_t = llvm_addr_type(p->module, ptr);
-		if (is_type_proc(a)) {
+		if (is_type_proc(a) && !is_type_closure(a)) {
 			LLVMTypeRef rawptr_type = lb_type(p->module, t_rawptr);
 			LLVMTypeRef rawptr_ptr_type = LLVMPointerType(rawptr_type, 0);
 			LLVMBuildStore(p->builder, LLVMConstNull(rawptr_type), LLVMBuildBitCast(p->builder, ptr.value, rawptr_ptr_type, ""));
@@ -1476,7 +1476,9 @@ gb_internal void lb_emit_store(lbProcedure *p, lbValue ptr, lbValue value) {
 	}
 
 	LLVMValueRef instr = nullptr;
-	if (lb_is_type_proc_recursive(a)) {
+	if (lb_is_type_proc_recursive(a) && !is_type_closure(a)) {
+		// closures are 2-word {fn, env} aggregates, not bare pointers, so fall through to a normal
+		// aggregate store below. (A pointer to a closure is still a plain pointer and stays on this path.)
 		// NOTE(bill, 2020-11-11): Because of certain LLVM rules, a procedure value may be
 		// stored as regular pointer with no procedure information
 
@@ -1952,7 +1954,8 @@ gb_internal LLVMTypeRef lb_type_internal_for_procedures_raw(lbModule *m, Type *t
 	bool *params_by_ptr = gb_alloc_array(permanent_allocator(), bool, param_count);
 	if (type->Proc.result_count != 0) {
 		Type *single_ret = reduce_tuple_to_single_type(type->Proc.results);
-		if (is_type_proc(single_ret)) {
+		if (is_type_proc(single_ret) && !is_type_closure(single_ret)) {
+			// bare procs collapse to a raw function pointer; closures keep their {fn, env} struct.
 			single_ret = t_rawptr;
 		}
 		ret = lb_type(m, single_ret);
@@ -1989,7 +1992,8 @@ gb_internal LLVMTypeRef lb_type_internal_for_procedures_raw(lbModule *m, Type *t
 			    type_size_of(e_type) <= 1) {
 				param_type = LLVMInt1TypeInContext(m->ctx);
 			} else {
-				if (is_type_proc(e_type)) {
+				if (is_type_proc(e_type) && !is_type_closure(e_type)) {
+					// closures pass as their {fn, env} struct; bare procs as a raw pointer.
 					param_type = lb_type(m, t_rawptr);
 				} else {
 					param_type = lb_type(m, e_type);
@@ -2729,9 +2733,17 @@ gb_internal LLVMTypeRef lb_type_internal(lbModule *m, Type *type) {
 
 	case Type_Proc:
 		{
+			LLVMTypeRef ptr = LLVMPointerType(LLVMIntTypeInContext(m->ctx, 8), 0);
+			// populate the raw/function-type caches in both cases. lb_get_function_type spins on
+			// lb_type() until function_type_map is set, so closures must populate it here too even though the
+			// closure *value* is a {fn, env} fat pointer rather than a bare function pointer.
 			LLVMTypeRef proc_raw_type = lb_type_internal_for_procedures_raw(m, type);
 			gb_unused(proc_raw_type);
-			return LLVMPointerType(LLVMIntTypeInContext(m->ctx, 8), 0);
+			if (type->Proc.is_closure) {
+				LLVMTypeRef elems[2] = {ptr, ptr};
+				return LLVMStructTypeInContext(m->ctx, elems, 2, /*packed*/false);
+			}
+			return ptr;
 		}
 		break;
 	case Type_BitSet:
@@ -3410,6 +3422,10 @@ gb_internal lbValue lb_find_or_add_entity_string16_slice_with_type(lbModule *m, 
 
 
 gb_internal lbValue lb_find_ident(lbProcedure *p, lbModule *m, Entity *e, Ast *expr) {
+	if (e->flags & EntityFlag_Captured) {
+		// a captured variable lives in the closure environment, not on this frame's stack.
+		return lb_addr_load(p, lb_closure_capture_addr(p, e));
+	}
 	if (e->flags & EntityFlag_Param) {
 		// NOTE(bill): Bypass the stack copied variable for
 		// direct parameters as there is no need for the direct load

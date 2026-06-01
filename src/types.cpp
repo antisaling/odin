@@ -210,6 +210,13 @@ struct TypeProc {
 	bool     diverging; // no return
 	bool     return_by_pointer;
 	bool     optional_ok;
+	// closures (the 'lambda' keyword). A closure value is a 2-word {fn_ptr, env_ptr} fat
+	// pointer instead of a bare function pointer. `captures` holds the body-local shadow entities
+	// (one per capture, in env-field order); each shadow's aliased_of points at the captured outer
+	// variable and Variable.field_index is its env slot.
+	bool     is_closure;
+	Slice<Entity *> captures;
+	Type *   env_type; // anonymous struct laying out the captured environment (one field per capture)
 };
 
 struct TypeNamed {
@@ -1742,6 +1749,12 @@ gb_internal bool is_type_proc(Type *t) {
 	if (t == nullptr) { return false; }
 	return t->kind == Type_Proc;
 }
+// a closure is a 'lambda' value: a 2-word {fn, env} fat pointer rather than a bare function pointer.
+gb_internal bool is_type_closure(Type *t) {
+	t = base_type(t);
+	if (t == nullptr) { return false; }
+	return t->kind == Type_Proc && t->Proc.is_closure;
+}
 gb_internal bool is_type_asm_proc(Type *t) {
 	t = base_type(t);
 	if (t == nullptr) { return false; }
@@ -2743,6 +2756,10 @@ gb_internal bool elem_type_can_be_constant(Type *t) {
 	if (is_type_any(t)) {
 		return false;
 	}
+	if (is_type_closure(t)) {
+		// a closure carries a runtime environment pointer, so it can never be a compile-time constant.
+		return false;
+	}
 	if (is_type_raw_union(t)) {
 		return is_type_raw_union_constantable(t);
 	}
@@ -3318,7 +3335,8 @@ gb_internal bool are_proc_properties_identical(Type *x, Type *y) {
 	       x->Proc.c_vararg    == y->Proc.c_vararg    &&
 	       x->Proc.variadic    == y->Proc.variadic    &&
 	       x->Proc.diverging   == y->Proc.diverging   &&
-	       x->Proc.optional_ok == y->Proc.optional_ok;
+	       x->Proc.optional_ok == y->Proc.optional_ok &&
+	       x->Proc.is_closure  == y->Proc.is_closure; // a closure type is never identical to a bare proc
 }
 
 gb_internal bool are_types_identical_internal(Type *x, Type *y, bool check_tuple_names) {
@@ -4635,6 +4653,10 @@ gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
 
 	case Type_SoaPointer:
 		return build_context.int_size;
+
+	case Type_Proc:
+		// closures and bare procs are both pointer-aligned; only the size differs.
+		return build_context.ptr_size;
 	}
 
 	// NOTE(bill): Things that are bigger than build_context.ptr_size, are actually comprised of smaller types
@@ -4962,6 +4984,10 @@ gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
 
 	case Type_BitField:
 		return type_size_of_internal(t->BitField.backing_type, path);
+
+	case Type_Proc:
+		// a closure is a fat pointer {fn_ptr, env_ptr}; a bare proc is a single function pointer.
+		return t->Proc.is_closure ? 2*build_context.ptr_size : build_context.ptr_size;
 	}
 
 	// Catch all
