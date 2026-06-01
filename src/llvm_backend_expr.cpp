@@ -5517,13 +5517,13 @@ gb_internal void lb_build_addr_compound_lit_assign_soa(lbProcedure *p, lbValue s
 			{
 				lbValue offset = lb_const_int(p->module, t_i32, td.elem_index);
 				lbValue index = lb_emit_arith(p, Token_Add, offset, loop_data.idx, t_i32);
-				lbAddr dst = lb_addr_soa_variable(soa_addr, index, td.expr);
+				lbAddr dst = lb_addr_soa_variable(soa_addr, index, td.expr, nullptr, lbSoaVariable_OuterIndex);
 				lb_addr_store(p, dst, td.value);
 			}
 			lb_loop_end(p, loop_data);
 		} else {
 			lbValue index = lb_const_int(p->module, t_i32, td.elem_index);
-			lbAddr dst = lb_addr_soa_variable(soa_addr, index, td.expr);
+			lbAddr dst = lb_addr_soa_variable(soa_addr, index, td.expr, nullptr, lbSoaVariable_OuterIndex);
 			lb_addr_store(p, dst, td.value);
 		}
 	}
@@ -5554,7 +5554,21 @@ gb_internal lbAddr lb_build_addr_index_expr(lbProcedure *p, Ast *expr) {
 		}
 
 		lbValue index = lb_build_expr(p, ie->index);
-		return lb_addr_soa_variable(val, index, ie->index);
+		Type *result_type = type_of_expr(expr);
+		lbSoaVariableMode soa_mode = lbSoaVariable_OuterIndex;
+
+		Type *elem_type = base_type(t->Struct.soa_elem);
+		Type *bt_result = base_type(type_deref(result_type));
+		if (t->Struct.soa_kind == StructSoa_Fixed &&
+		    is_type_enum(t->Struct.soa_index) &&
+		    elem_type != nullptr && elem_type->kind == Type_Slice &&
+		    bt_result != nullptr && bt_result->kind == Type_EnumeratedArray &&
+		    are_types_identical(bt_result->EnumeratedArray.index, t->Struct.soa_index) &&
+		    are_types_identical(bt_result->EnumeratedArray.elem, elem_type->Slice.elem)) {
+			soa_mode = lbSoaVariable_InnerSliceRowIndex;
+		}
+
+		return lb_addr_soa_variable(val, index, ie->index, result_type, soa_mode);
 	}
 
 	if (ie->expr->tav.mode == Addressing_SoaVariable) {
@@ -5586,6 +5600,27 @@ gb_internal lbAddr lb_build_addr_index_expr(lbProcedure *p, Ast *expr) {
 
 			Type *soa_type = base_type(type_deref(base_addr.addr.type));
 			GB_ASSERT(is_type_soa_struct(soa_type));
+
+			if (base_addr.soa.mode == lbSoaVariable_InnerSliceRowIndex) {
+				Type *elem_type = base_type(soa_type->Struct.soa_elem);
+				GB_ASSERT(elem_type->kind == Type_Slice);
+
+				lbValue inner_index = lb_emit_conv(p, base_addr.soa.index, t_int);
+				lbValue data_fields = lb_emit_struct_ep(p, base_addr.addr, 0);
+				lbValue len_fields  = lb_emit_struct_ep(p, base_addr.addr, 1);
+
+				lbValue len_ptr = lb_emit_array_epi(p, len_fields, field_index);
+				lbValue len = lb_emit_load(p, len_ptr);
+				if (base_addr.soa.index_expr != nullptr) {
+					lb_emit_bounds_check(p, ast_token(base_addr.soa.index_expr), inner_index, len);
+				}
+
+				lbValue data_ptr_ptr = lb_emit_array_epi(p, data_fields, field_index);
+				lbValue data_ptr = lb_emit_load(p, data_ptr_ptr);
+				lbValue elem = lb_emit_ptr_offset(p, data_ptr, inner_index);
+				elem.type = alloc_type_multi_pointer_to_pointer(elem.type);
+				return lb_addr(elem);
+			}
 
 			if (base_addr.soa.index_expr != nullptr && (!lb_is_const(base_addr.soa.index) || soa_type->Struct.soa_kind != StructSoa_Fixed)) {
 				lbValue len = lb_soa_struct_len(p, base_addr.addr);
@@ -7255,7 +7290,7 @@ gb_internal lbAddr lb_build_addr_internal(lbProcedure *p, Ast *expr) {
 			lbValue value = lb_build_expr(p, de->expr);
 			lbValue ptr = lb_emit_struct_ev(p, value, 0);
 			lbValue idx = lb_emit_struct_ev(p, value, 1);
-			return lb_addr_soa_variable(ptr, idx, nullptr);
+			return lb_addr_soa_variable(ptr, idx, nullptr, nullptr, lbSoaVariable_OuterIndex);
 		}
 		lbValue addr = lb_build_expr(p, de->expr);
 		return lb_addr(addr);

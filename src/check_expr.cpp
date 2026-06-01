@@ -7698,6 +7698,20 @@ gb_internal Type *get_custom_index_expr_type_hint(Type *container_type, Ast *con
 	return nullptr;
 }
 
+gb_internal bool is_soa_outer_index_expr(CheckerContext *c, Ast *index_expr, Type *index_type) {
+	Ast *node = unparen_expr(index_expr);
+	if (node != nullptr && node->kind == Ast_ImplicitSelectorExpr) {
+		return true;
+	}
+
+	Operand probe = {};
+	check_expr(c, &probe, index_expr);
+	if (probe.mode == Addressing_Invalid) {
+		return false;
+	}
+	return are_types_identical(default_type(probe.type), index_type);
+}
+
 gb_internal bool receiver_type_matches_custom_index_overload_param(CheckerContext *c, Type *param_type, Type *receiver_type) {
 	if (param_type == nullptr || receiver_type == nullptr ||
 	    param_type == t_invalid || receiver_type == t_invalid) {
@@ -13053,6 +13067,9 @@ gb_internal ExprKind check_index_expr(CheckerContext *c, Operand *o, Ast *node, 
 
 	Type *index_type_hint = nullptr;
 	Type *soa_index_type_hint = nullptr;
+	Type *soa_outer_index_type = nullptr;
+	Type *soa_inner_slice_row_type = nullptr;
+	bool soa_outer_index_selected = false;
 	if (is_type_enumerated_array(t)) {
 		Type *bt = base_type(t);
 		GB_ASSERT(bt->kind == Type_EnumeratedArray);
@@ -13061,6 +13078,24 @@ gb_internal ExprKind check_index_expr(CheckerContext *c, Operand *o, Ast *node, 
 	           t->Struct.soa_kind == StructSoa_Fixed &&
 	           is_type_enum(t->Struct.soa_index)) {
 		soa_index_type_hint = t->Struct.soa_index;
+		soa_outer_index_type = t->Struct.soa_index;
+		soa_outer_index_selected = is_soa_outer_index_expr(c, ie->index, soa_outer_index_type);
+
+		if (!soa_outer_index_selected) {
+			Type *indexed_elem = base_type(type_deref(o->type));
+			if (indexed_elem != nullptr && indexed_elem->kind == Type_Slice) {
+				Type *et = base_type(soa_outer_index_type);
+				GB_ASSERT(et->kind == Type_Enum);
+				soa_inner_slice_row_type = alloc_type_enumerated_array(
+					indexed_elem->Slice.elem,
+					soa_outer_index_type,
+					et->Enum.min_value,
+					et->Enum.max_value,
+					et->Enum.fields.count,
+					Token_Invalid
+				);
+			}
+		}
 	}
 	if (soa_index_type_hint == nullptr) {
 		Ast *indexed_expr = unparen_expr(ie->expr);
@@ -13078,14 +13113,31 @@ gb_internal ExprKind check_index_expr(CheckerContext *c, Operand *o, Ast *node, 
 		}
 	}
 	if (soa_index_type_hint != nullptr) {
-		Ast *index_expr = unparen_expr(ie->index);
-		if (index_expr != nullptr && index_expr->kind == Ast_ImplicitSelectorExpr) {
+		if (soa_outer_index_selected) {
 			index_type_hint = soa_index_type_hint;
+		} else {
+			Ast *index_expr = unparen_expr(ie->index);
+			if (index_expr != nullptr && index_expr->kind == Ast_ImplicitSelectorExpr) {
+				index_type_hint = soa_index_type_hint;
+			}
 		}
 	}
+	bool use_soa_inner_slice_row_indexing = soa_inner_slice_row_type != nullptr && !soa_outer_index_selected;
 
 	i64 index = 0;
-	bool ok = check_index_value(c, t, false, ie->index, max_count, &index, index_type_hint);
+	Type *index_main_type = t;
+	i64 index_max_count = max_count;
+	if (use_soa_inner_slice_row_indexing) {
+		index_main_type = o->type;
+		index_max_count = -1;
+		index_type_hint = nullptr;
+	}
+	bool ok = check_index_value(c, index_main_type, false, ie->index, index_max_count, &index, index_type_hint);
+
+	if (use_soa_inner_slice_row_indexing && o->mode != Addressing_Invalid) {
+		o->type = soa_inner_slice_row_type;
+		o->mode = Addressing_SoaVariable;
+	}
 
 	if (indexed_from_soa_variable &&
 	    (is_type_array(t) || is_type_enumerated_array(t)) &&

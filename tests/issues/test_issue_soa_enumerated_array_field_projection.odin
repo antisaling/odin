@@ -110,3 +110,45 @@ test_soa_enum_literal_with_selector_fields :: proc(t: ^testing.T) {
 	testing.expect_value(t, m[.Y].other, 200)
 	testing.expect_value(t, m.field[.Z], 30)
 }
+
+@(test)
+test_soa_enum_slice_numeric_index_transposes_row :: proc(t: ^testing.T) {
+	Layer :: enum {Dry, Wet}
+	m: #soa[Layer][]i32
+
+	dry := [3]i32{1, 2, 3}
+	wet := [3]i32{10, 20, 30}
+
+	m[.Dry] = dry[:]
+	m[.Wet] = wet[:]
+
+	layer: Layer = .Dry
+	col: []i32 = m[layer]
+	testing.expect_value(t, col[1], 2)
+
+	q := 1
+	row: [Layer]i32 = m[q]
+	testing.expect_value(t, row[.Dry], 2)
+	testing.expect_value(t, row[.Wet], 20)
+
+	m[q] = [Layer]i32{.Dry = 7, .Wet = 70}
+	testing.expect_value(t, m[.Dry][1], 7)
+	testing.expect_value(t, m[.Wet][1], 70)
+}
+
+@(test)
+test_soa_inner_outer_same_index_type_keeps_outer_semantics :: proc(t: ^testing.T) {
+	Layer :: enum {Dry, Wet}
+	m: #soa[Layer][Layer]i32
+
+	m[.Dry] = [Layer]i32{.Dry = 1, .Wet = 2}
+	m[.Wet] = [Layer]i32{.Dry = 10, .Wet = 20}
+
+	// Numeric index must still mean outer index when inner and outer index types match.
+	m[0] = [Layer]i32{.Dry = 100, .Wet = 200}
+
+	testing.expect_value(t, m[.Dry][.Dry], 100)
+	testing.expect_value(t, m[.Dry][.Wet], 200)
+	testing.expect_value(t, m[.Wet][.Dry], 10)
+	testing.expect_value(t, m[.Wet][.Wet], 20)
+}
