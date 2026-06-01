@@ -3102,7 +3102,9 @@ gb_internal lbValue lb_emit_conv(lbProcedure *p, lbValue value, Type *t) {
 	}
 
 	// proc <-> proc
-	if (is_type_proc(src) && is_type_proc(dst)) {
+	// these pointer-cast paths are for bare function pointers only; a closure is a 2-word aggregate
+	// and its only valid conversion (identical closure type) was handled as a no-op above.
+	if (is_type_proc(src) && is_type_proc(dst) && !is_type_closure(src) && !is_type_closure(dst)) {
 		lbValue res = {};
 		res.type = t;
 		res.value = LLVMBuildPointerCast(p->builder, value.value, lb_type(m, t), "");
@@ -3110,14 +3112,14 @@ gb_internal lbValue lb_emit_conv(lbProcedure *p, lbValue value, Type *t) {
 	}
 
 	// pointer -> proc
-	if (is_type_pointer(src) && is_type_proc(dst)) {
+	if (is_type_pointer(src) && is_type_proc(dst) && !is_type_closure(dst)) {
 		lbValue res = {};
 		res.type = t;
 		res.value = LLVMBuildPointerCast(p->builder, value.value, lb_type(m, t), "");
 		return res;
 	}
 	// proc -> pointer
-	if (is_type_proc(src) && is_type_pointer(dst)) {
+	if (is_type_proc(src) && is_type_pointer(dst) && !is_type_closure(src)) {
 		lbValue res = {};
 		res.type = t;
 		res.value = LLVMBuildPointerCast(p->builder, value.value, lb_type(m, t), "");

@@ -2822,7 +2822,9 @@ gb_internal bool is_type_comparable(Type *t) {
 	case Type_Array:
 		return is_type_comparable(t->Array.elem);
 	case Type_Proc:
-		return true;
+		// bare procs compare as function pointers; a closure is a 2-word {fn,env} aggregate and is
+		// not comparable (matching slices/maps), which also keeps the scalar-compare codegen path unreached.
+		return !t->Proc.is_closure;
 	case Type_Matrix:
 		return is_type_comparable(t->Matrix.elem);
 
@@ -2891,10 +2893,12 @@ gb_internal bool is_type_simple_compare(Type *t) {
 	case Type_Pointer:
 	case Type_MultiPointer:
 	case Type_SoaPointer:
-	case Type_Proc:
 	case Type_BitSet:
 	case Type_BitField:
 		return true;
+	case Type_Proc:
+		// closures are 2-word aggregates and not (simply) comparable; bare procs are pointers.
+		return !t->Proc.is_closure;
 
 	case Type_Matrix:
 		return is_type_simple_compare(t->Matrix.elem);
