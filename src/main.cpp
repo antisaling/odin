@@ -1200,9 +1200,12 @@ gb_internal bool parse_build_flags(Array<String> args) {
 								String str = value.value_string;
 								bool found = false;
 
-								if (selected_target_metrics->metrics->os != TargetOs_darwin &&
-								    selected_target_metrics->metrics->os != TargetOs_linux ) {
-									gb_printf_err("-subtarget can only be used with darwin and linux based targets at the moment\n");
+								bool allow_subtarget =
+									selected_target_metrics->metrics->os == TargetOs_darwin ||
+									selected_target_metrics->metrics->os == TargetOs_linux ||
+									is_target_freestanding_thumbv6m(selected_target_metrics->metrics);
+								if (!allow_subtarget) {
+									gb_printf_err("-subtarget can only be used with darwin, linux, and freestanding_thumbv6m targets at the moment\n");
 									bad_flags = true;
 									break;
 								}
