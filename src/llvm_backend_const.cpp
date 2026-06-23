@@ -665,24 +665,38 @@ gb_internal bool lb_is_nested_possibly_constant(Type *ft, Selection const &sel, 
 	return lb_is_elem_const(elem, ft);
 }
 
-#if LLVM_VERSION_MAJOR == 14
 LLVMValueRef llvm_const_pad_to_size(lbModule *m, LLVMValueRef val, LLVMTypeRef dst_ty) {
 	LLVMContextRef ctx = m->ctx;
 	LLVMTargetDataRef td = LLVMGetModuleDataLayout(m->mod);
 	LLVMTypeRef src_ty = LLVMTypeOf(val);
+	if (src_ty == dst_ty) {
+		return val;
+	}
 	unsigned src_bits = (unsigned)LLVMSizeOfTypeInBits(td, src_ty);
 	unsigned dst_bits = (unsigned)LLVMSizeOfTypeInBits(td, dst_ty);
+
+	if (src_bits == dst_bits) {
+		bool failure = false;
+		LLVMValueRef casted = llvm_const_cast(m, val, dst_ty, &failure);
+		if (!failure && LLVMTypeOf(casted) == dst_ty) {
+			return casted;
+		}
+	}
 
 	LLVMValueRef as_int = nullptr;
 	LLVMTypeKind src_kind = LLVMGetTypeKind(src_ty);
 
-	if (src_kind == LLVMIntegerTypeKind ||
-		src_kind == LLVMFloatTypeKind ||
+	if (src_kind == LLVMIntegerTypeKind) {
+		as_int = val;
+	} else if (src_kind == LLVMFloatTypeKind ||
+		src_kind == LLVMHalfTypeKind ||
 		src_kind == LLVMDoubleTypeKind ||
-		src_kind == LLVMPointerTypeKind ||
 		src_kind == LLVMVectorTypeKind) {
 		LLVMTypeRef src_int_ty = LLVMIntTypeInContext(ctx, src_bits);
 		as_int = LLVMConstBitCast(val, src_int_ty);
+	} else if (src_kind == LLVMPointerTypeKind) {
+		LLVMTypeRef src_int_ty = LLVMIntTypeInContext(ctx, src_bits);
+		as_int = LLVMConstPtrToInt(val, src_int_ty);
 
 	} else if (src_kind == LLVMArrayTypeKind) {
 		unsigned elem_count = LLVMGetArrayLength(src_ty);
@@ -695,8 +709,8 @@ LLVMValueRef llvm_const_pad_to_size(lbModule *m, LLVMValueRef val, LLVMTypeRef d
 			LLVMValueRef elem = llvm_const_extract_value(m, val, i);
 			LLVMTypeRef elem_int_ty = LLVMIntTypeInContext(ctx, elem_bits);
 			LLVMValueRef elem_int = llvm_const_pad_to_size(m, elem, elem_int_ty);
-			LLVMValueRef shifted = LLVMConstShl(LLVMConstZExt(elem_int, src_int_ty), LLVMConstInt(src_int_ty, i * elem_bits, false));
-			as_int = LLVMConstOr(as_int, shifted);
+			LLVMValueRef shifted = LLVMBuildShl(m->const_dummy_builder, LLVMBuildZExt(m->const_dummy_builder, elem_int, src_int_ty, ""), LLVMConstInt(src_int_ty, i * elem_bits, false), "");
+			as_int = LLVMBuildOr(m->const_dummy_builder, as_int, shifted, "");
 		}
 	} else if (src_kind == LLVMStructTypeKind) {
 		unsigned field_count = LLVMCountStructElementTypes(src_ty);
@@ -714,8 +728,8 @@ LLVMValueRef llvm_const_pad_to_size(lbModule *m, LLVMValueRef val, LLVMTypeRef d
 			uint64_t field_offset_bytes = LLVMOffsetOfElement(td, src_ty, i);
 			uint64_t field_offset_bits = field_offset_bytes * 8;
 
-			LLVMValueRef shifted = LLVMConstShl(LLVMConstZExt(field_int, src_int_ty), LLVMConstInt(src_int_ty, field_offset_bits, false));
-			as_int = LLVMConstOr(as_int, shifted);
+			LLVMValueRef shifted = LLVMBuildShl(m->const_dummy_builder, LLVMBuildZExt(m->const_dummy_builder, field_int, src_int_ty, ""), LLVMConstInt(src_int_ty, field_offset_bits, false), "");
+			as_int = LLVMBuildOr(m->const_dummy_builder, as_int, shifted, "");
 		}
 	} else {
 		gb_printf_err("unsupported const_pad source type: %s\n", LLVMPrintTypeToString(src_ty));
@@ -725,7 +739,7 @@ LLVMValueRef llvm_const_pad_to_size(lbModule *m, LLVMValueRef val, LLVMTypeRef d
 	if (src_bits != dst_bits) {
 		LLVMTypeRef dst_int_ty = LLVMIntTypeInContext(ctx, dst_bits);
 		if (src_bits < dst_bits) {
-			as_int = LLVMConstZExt(as_int, dst_int_ty);
+			as_int = LLVMBuildZExt(m->const_dummy_builder, as_int, dst_int_ty, "");
 		} else {
 			as_int = LLVMConstTrunc(as_int, dst_int_ty);
 		}
@@ -736,9 +750,13 @@ LLVMValueRef llvm_const_pad_to_size(lbModule *m, LLVMValueRef val, LLVMTypeRef d
 	if (dst_kind == LLVMIntegerTypeKind ||
 		dst_kind == LLVMFloatTypeKind ||
 		dst_kind == LLVMDoubleTypeKind ||
-		dst_kind == LLVMPointerTypeKind ||
 		dst_kind == LLVMVectorTypeKind) {
+		if (dst_kind == LLVMIntegerTypeKind) {
+			return as_int;
+		}
 		return LLVMConstBitCast(as_int, dst_ty);
+	} else if (dst_kind == LLVMPointerTypeKind) {
+		return LLVMConstIntToPtr(as_int, dst_ty);
 
 	} else if (dst_kind == LLVMArrayTypeKind) {
 		unsigned elem_count = LLVMGetArrayLength(dst_ty);
@@ -749,7 +767,7 @@ LLVMValueRef llvm_const_pad_to_size(lbModule *m, LLVMValueRef val, LLVMTypeRef d
 		LLVMTypeRef as_int_ty = LLVMTypeOf(as_int);
 
 		for (unsigned i = 0; i < elem_count; i++) {
-			LLVMValueRef shifted = LLVMConstLShr(as_int, LLVMConstInt(as_int_ty, i * elem_bits, false));
+			LLVMValueRef shifted = LLVMBuildLShr(m->const_dummy_builder, as_int, LLVMConstInt(as_int_ty, i * elem_bits, false), "");
 			LLVMTypeRef elem_int_ty = LLVMIntTypeInContext(ctx, elem_bits);
 			LLVMValueRef trunc = LLVMConstTrunc(shifted, elem_int_ty);
 			elems[i] = llvm_const_pad_to_size(m, trunc, elem_ty);
@@ -761,7 +779,6 @@ LLVMValueRef llvm_const_pad_to_size(lbModule *m, LLVMValueRef val, LLVMTypeRef d
 	gb_printf_err("unsupported const_pad destination type: %s\n", LLVMPrintTypeToString(dst_ty));
 	return nullptr;
 }
-#endif
 
 gb_internal void lb_const_array_spread(lbModule *m, lbConstContext cc, Type *array, ExactValue value, lbValue *res, Type *value_type, Ast *value_expr) {
 	GB_ASSERT(array->kind == Type_Array || array->kind == Type_EnumeratedArray);
@@ -1144,8 +1161,7 @@ gb_internal lbValue lb_const_value(lbModule *m, Type *type, ExactValue value, Ty
 				values[value_count++] = LLVMConstNull(padding_type);
 			}
 
-			res.value = LLVMConstStructInContext(m->ctx, values, value_count, true);
-
+			res.value = llvm_const_named_struct_internal(m, lb_type(m, original_type), values, value_count);
 			return res;
 		}
 	}
