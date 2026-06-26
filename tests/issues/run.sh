@@ -94,6 +94,49 @@ else
 	echo "SUCCESSFUL 0/1"
 	exit 1
 fi
+$ODIN check ../test_trigger_location_accept.odin $COMMON -internal-ignore-panic
+if [[ $($ODIN check ../test_trigger_location_import_direct.odin $COMMON -target:js_wasm32 2>&1 >/dev/null | grep -F -c "Triggered by import 'core:os'") -eq 1 ]] ; then
+	echo "SUCCESSFUL 1/1"
+else
+	echo "SUCCESSFUL 0/1"
+	exit 1
+fi
+if [[ $($ODIN check ../test_trigger_location_import_chain -no-entry-point $COMMON_NO_FILE -target:js_wasm32 2>&1 >/dev/null | grep -F -c "Triggered by import '../b'") -eq 1 ]] ; then
+	echo "SUCCESSFUL 1/1"
+else
+	echo "SUCCESSFUL 0/1"
+	exit 1
+fi
+if [[ $($ODIN check ../test_trigger_location_import_chain -no-entry-point $COMMON_NO_FILE -target:js_wasm32 2>&1 >/dev/null | grep -F -c "Imported via './a'") -eq 1 ]] ; then
+	echo "SUCCESSFUL 1/1"
+else
+	echo "SUCCESSFUL 0/1"
+	exit 1
+fi
+if [[ $($ODIN check ../test_trigger_location_use_site.odin $COMMON 2>&1 >/dev/null | grep -F -c "Triggered by use of 'trigger'") -eq 1 ]] ; then
+	echo "SUCCESSFUL 1/1"
+else
+	echo "SUCCESSFUL 0/1"
+	exit 1
+fi
+if [[ $($ODIN check ../test_trigger_location_reject_arg_count.odin $COMMON 2>&1 >/dev/null | grep -F -c "'#panic' expects 1 or 2 arguments") -eq 1 ]] ; then
+	echo "SUCCESSFUL 1/1"
+else
+	echo "SUCCESSFUL 0/1"
+	exit 1
+fi
+if [[ $($ODIN check ../test_trigger_location_reject_assert_third.odin $COMMON 2>&1 >/dev/null | grep -F -c "'#assert' expected a constant string as its second argument when a third argument is provided") -eq 1 ]] ; then
+	echo "SUCCESSFUL 1/1"
+else
+	echo "SUCCESSFUL 0/1"
+	exit 1
+fi
+if [[ $($ODIN check ../test_trigger_location_reject_outside.odin $COMMON 2>&1 >/dev/null | grep -F -c "#trigger_location may only be used as an argument to '#assert' or '#panic'") -eq 1 ]] ; then
+	echo "SUCCESSFUL 1/1"
+else
+	echo "SUCCESSFUL 0/1"
+	exit 1
+fi
 
 set +x
 
